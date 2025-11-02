@@ -280,7 +280,7 @@ if __name__ == '__main__':
     try:
         client.loop.run_until_complete(main())
     except KeyboardInterrupt:
-        print("\nUserbot stopped!")🌍 Region: {get_region_flag(basic.get('region', 'N/A'))}
+        print("\nUserbot stopped!") Region: {get_region_flag(basic.get('region', 'N/A'))}
 🧾 Account Type: Garena ({basic.get('accounttype', 'N/A')})
 🏅 Level: {basic.get('level', 'N/A')}
 ✨ EXP: {format_number(basic.get('exp', 0))}
