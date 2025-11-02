@@ -3,6 +3,7 @@ import asyncio
 import requests
 from datetime import datetime
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from flask import Flask
 from threading import Thread
 
@@ -23,12 +24,12 @@ def run_flask():
     app.run(host='0.0.0.0', port=port)
 
 # Get credentials from environment variables
-API_ID = os.getenv('API_ID')
+API_ID = int(os.getenv('API_ID'))
 API_HASH = os.getenv('API_HASH')
 SESSION_STRING = os.getenv('SESSION_STRING')
 
-# Initialize the client
-client = TelegramClient(SESSION_STRING, API_ID, API_HASH)
+# Initialize the client with StringSession
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
 def unix_to_date(timestamp):
     """Convert Unix timestamp to readable date"""
