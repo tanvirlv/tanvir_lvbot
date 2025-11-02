@@ -24,9 +24,21 @@ def run_flask():
     app.run(host='0.0.0.0', port=port)
 
 # Get credentials from environment variables
-API_ID = int(os.getenv('API_ID'))
-API_HASH = os.getenv('API_HASH')
-SESSION_STRING = os.getenv('SESSION_STRING')
+API_ID = int(os.getenv('API_ID', '0'))
+API_HASH = os.getenv('API_HASH', '')
+SESSION_STRING = os.getenv('SESSION_STRING', '')
+
+# Validate environment variables
+if not API_ID or not API_HASH or not SESSION_STRING:
+    print("❌ ERROR: Missing environment variables!")
+    print(f"API_ID: {'✓' if API_ID else '✗'}")
+    print(f"API_HASH: {'✓' if API_HASH else '✗'}")
+    print(f"SESSION_STRING: {'✓' if SESSION_STRING else '✗'}")
+    exit(1)
+
+print(f"✓ API_ID: {API_ID}")
+print(f"✓ API_HASH: {API_HASH[:10]}...")
+print(f"✓ SESSION_STRING: {SESSION_STRING[:20]}...")
 
 # Initialize the client with StringSession
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
@@ -101,6 +113,126 @@ def format_player_profile(data):
 ⭐ Ranking Points: {format_number(basic.get('rankingpoints', 0))}
 🚀 Max Rank: {basic.get('maxrank', 'N/A')}
 ⚔️ Clash Squad Rank: {basic.get('csrank', 'N/A')}
+🎯 CS Points: {basic.get('csrankingpoints', 'N/A')}
+🦈 Hippo Rank: {basic.get('hipporank', 'N/A')}
+🎖️ Hippo Points: {basic.get('hipporankingpoints', 'N/A')}
+"""
+
+        # Add pet information if available
+        if pet:
+            message += f"""
+🐾 Pet Information
+🐶 Pet Name: {pet.get('name', 'N/A')}
+🆔 Pet ID: {pet.get('id', 'N/A')}
+📈 Level: {pet.get('level', 'N/A')} — EXP: {format_number(pet.get('exp', 0))}
+🎨 Skin ID: {pet.get('skinid', 'N/A')}
+💥 Selected Skill ID: {pet.get('selectedskillid', 'N/A')}
+"""
+
+        # Add signature if available
+        signature = social.get('signature', '')
+        if signature and signature != "Free Fire! Battle in Style!":
+            message += f"""
+✍️ Signature: 💬 "{signature}"
+"""
+        
+        # Add veteran status if available
+        veteran_expire = basic.get('veteranexpiretime')
+        if veteran_expire:
+            message += f"""
+🛡️ Veteran Status
+🎖️ Expires: 🗓️ {unix_to_date(veteran_expire)}
+"""
+
+        # Add credit score
+        if credit.get('creditscore'):
+            message += f"""
+💳 Credit Score: {credit.get('creditscore', 'N/A')}/100
+"""
+
+        message += "```"
+        return message
+        
+    except Exception as e:
+        return f"```\n❌ Error formatting player data: {str(e)}\n```"
+
+@client.on(events.NewMessage(outgoing=True, pattern=r'^\.cid (\d+)$'))
+async def handle_cid_command(event):
+    """Handle .cid command"""
+    try:
+        uid = event.pattern_match.group(1)
+        
+        # Send processing message
+        status_msg = await event.reply("🔍 Fetching player data...")
+        
+        # Fetch player data using requests (sync)
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, fetch_player_data, uid)
+        
+        if data and data.get('basicinfo'):
+            # Format and send the profile
+            profile_message = format_player_profile(data)
+            await status_msg.edit(profile_message)
+        else:
+            await status_msg.edit("```\n❌ Player not found or API error occurred.\nPlease check the UID and try again.\n```")
+            
+    except Exception as e:
+        await event.reply(f"```\n❌ Error: {str(e)}\n```")
+
+@client.on(events.NewMessage(outgoing=True, pattern=r'^\.help$'))
+async def help_command(event):
+    """Help command"""
+    help_text = """```
+🎮 Free Fire Player Info Bot
+
+Commands:
+.cid <uid> - Get player details
+.help - Show this help message
+
+Example:
+.cid 2716319203
+```"""
+    await event.reply(help_text)
+
+async def main():
+    """Main function to start the bot"""
+    try:
+        print("Starting Free Fire Userbot...")
+        print("Connecting to Telegram...")
+        
+        # Connect without start() to avoid phone prompt
+        await client.connect()
+        
+        # Check if authorized
+        if not await client.is_user_authorized():
+            print("❌ Session string is invalid or expired!")
+            print("Please generate a new session string.")
+            return
+        
+        # Get current user info
+        me = await client.get_me()
+        print(f"✅ Logged in as: {me.first_name} (@{me.username})")
+        print("✅ Userbot is running! Use .cid <uid> to fetch player info")
+        
+        await client.run_until_disconnected()
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == '__main__':
+    # Start Flask in a separate thread
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    print("✅ Flask server started")
+    
+    # Start Telegram client
+    try:
+        client.loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("\n❌ Userbot stopped!")⚔️ Clash Squad Rank: {basic.get('csrank', 'N/A')}
 🎯 CS Points: {basic.get('csrankingpoints', 'N/A')}
 🦈 Hippo Rank: {basic.get('hipporank', 'N/A')}
 🎖️ Hippo Points: {basic.get('hipporankingpoints', 'N/A')}
