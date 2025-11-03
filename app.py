@@ -1,106 +1,302 @@
+# -*- coding: utf-8 -*-
 import os
+import sys
 import asyncio
+import logging
 from datetime import datetime
-from telethon import TelegramClient, events
 from flask import Flask
 from threading import Thread
-import aiohttp
-import logging
+from telethon import TelegramClient, events
+import requests
 
-# Setup logging
+# Set stdout encoding to UTF-8
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+
+# Set up logging
 logging.basicConfig(
     format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s',
     level=logging.INFO
 )
 
 # Environment variables
-API_ID = int(os.getenv('API_ID'))
-API_HASH = os.getenv('API_HASH')
-SESSION_STRING = os.getenv('SESSION_STRING')
-PORT = int(os.getenv('PORT', 10000))
+API_ID = int(os.environ.get("API_ID", "0"))
+API_HASH = os.environ.get("API_HASH", "")
+SESSION_STRING = os.environ.get("SESSION_STRING", "")
 
-# Initialize Telethon Client
-client = TelegramClient('userbot', API_ID, API_HASH)
+# Initialize Telethon client
+client = TelegramClient(SESSION_STRING, API_ID, API_HASH)
 
-# Flask app for Render deployment
+# Flask app for keeping service alive
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🤖 Free Fire Userbot is Running!"
+    return "Free Fire Userbot is running!"
 
 @app.route('/health')
 def health():
-    return {"status": "healthy", "bot": "running"}
+    return {"status": "alive", "bot": "running"}
 
 def run_flask():
     """Run Flask in a separate thread"""
-    app.run(host='0.0.0.0', port=PORT)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def unix_to_date(timestamp):
     """Convert Unix timestamp to readable date"""
     try:
-        if isinstance(timestamp, str):
-            timestamp = int(timestamp)
-        return datetime.fromtimestamp(timestamp).strftime('%d %b %Y, %I:%M %p')
+        timestamp = int(timestamp)
+        return datetime.fromtimestamp(timestamp).strftime('%d %B %Y, %I:%M %p')
     except:
-        return "N/A"
+        return str(timestamp)
 
 def format_number(num):
-    """Format numbers with commas"""
+    """Format number with commas"""
     try:
-        return f"{int(num):,}"
+        return "{:,}".format(int(num))
     except:
         return str(num)
 
-def get_region_flag(region):
-    """Get flag emoji for region"""
-    flags = {
-        'BD': '🇧🇩 Bangladesh',
-        'IN': '🇮🇳 India',
-        'PK': '🇵🇰 Pakistan',
-        'US': '🇺🇸 USA',
-        'BR': '🇧🇷 Brazil',
-        'ID': '🇮🇩 Indonesia',
-        'TH': '🇹🇭 Thailand',
-        'VN': '🇻🇳 Vietnam',
-        'MY': '🇲🇾 Malaysia',
-        'PH': '🇵🇭 Philippines',
-    }
-    return flags.get(region.upper(), f'🌍 {region}')
+def get_rank_tier(rank):
+    """Get rank tier based on rank number"""
+    if rank <= 100:
+        return "Heroic"
+    elif rank <= 500:
+        return "Diamond"
+    elif rank <= 1000:
+        return "Platinum"
+    elif rank <= 2000:
+        return "Gold"
+    else:
+        return "Silver/Bronze"
 
-async def fetch_player_data(uid, server='bd'):
+def fetch_player_data(uid, server="bd"):
     """Fetch player data from API"""
-    url = f"https://freefire-api-2-e4j5.onrender.com/get_player_personal_show?server={server}&uid={uid}"
-    
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                if response.status == 200:
-                    return await response.json()
-                else:
-                    return None
+        url = "https://freefire-api-2-e4j5.onrender.com/get_player_personal_show?server={}&uid={}".format(server, uid)
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        logging.error("API Error: {}".format(e))
+        return None
     except Exception as e:
-        logging.error(f"API Error: {e}")
+        logging.error("Error: {}".format(e))
         return None
 
-def format_player_info(data):
-    """Format player information into beautiful text"""
+def format_player_profile(data):
+    """Format player profile with emojis"""
     try:
-        basic = data.get('basicinfo', {})
-        profile = data.get('profileinfo', {})
-        pet = data.get('petinfo', {})
-        social = data.get('socialinfo', {})
-        credit = data.get('creditscoreinfo', {})
+        basic = data.get("basicinfo", {})
+        profile = data.get("profileinfo", {})
+        pet = data.get("petinfo", {})
+        social = data.get("socialinfo", {})
+        credit = data.get("creditscoreinfo", {})
         
-        # Build formatted message
-        message = f"""```
-🎮 Free Fire Player Profile
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-👤 Nickname: {basic.get('nickname', 'N/A')}
-🆔 Player ID: {basic.get('accountid', 'N/A')}
-🌍 Region: {get_region_flag(basic.get('region', 'Unknown'))}
-🧾 Account Type: {'Garena' if basic.get('accounttype') == 1 else 'Guest'} ({basic.get('accounttype', 'N/A')})
+        # Basic Information
+        nickname = basic.get("nickname", "N/A")
+        player_id = basic.get("accountid", "N/A")
+        region = basic.get("region", "N/A")
+        account_type = basic.get("accounttype", "N/A")
+        level = basic.get("level", "N/A")
+        exp = format_number(basic.get("exp", 0))
+        likes = format_number(basic.get("liked", 0))
+        created_at = unix_to_date(basic.get("createat", "N/A"))
+        last_login = unix_to_date(basic.get("lastloginat", "N/A"))
+        
+        # Rank Information
+        br_rank = basic.get("rank", "N/A")
+        rank_points = format_number(basic.get("rankingpoints", 0))
+        max_rank = basic.get("maxrank", "N/A")
+        cs_rank = basic.get("csrank", "N/A")
+        cs_points = basic.get("csrankingpoints", 0)
+        hippo_rank = basic.get("hipporank", "N/A")
+        
+        if br_rank != "N/A":
+            rank_tier = get_rank_tier(int(br_rank))
+        else:
+            rank_tier = "N/A"
+        
+        # Pet Information
+        pet_name = pet.get("name", "N/A")
+        pet_id = pet.get("id", "N/A")
+        pet_level = pet.get("level", "N/A")
+        pet_exp = format_number(pet.get("exp", 0))
+        pet_skin = pet.get("skinid", "N/A")
+        pet_skill = pet.get("selectedskillid", "N/A")
+        
+        # Social Information
+        signature = social.get("signature", "N/A")
+        
+        # Veteran Status
+        veteran_expire = basic.get("veteranexpiretime", "")
+        if veteran_expire:
+            veteran_date = unix_to_date(veteran_expire)
+        else:
+            veteran_date = "N/A"
+        
+        # Credit Score
+        credit_score = credit.get("creditscore", "N/A")
+        
+        # Region Flag
+        if region == "BD":
+            region_flag = "🇧🇩"
+            region_name = "Bangladesh"
+        else:
+            region_flag = "🌍"
+            region_name = region
+        
+        # Account Type Name
+        if account_type == 1:
+            acc_type_name = "Garena"
+        else:
+            acc_type_name = "Guest"
+        
+        # Build message parts
+        parts = []
+        parts.append("```")
+        parts.append("🎮 Free Fire Player Profile")
+        parts.append("═══════════════════════════════")
+        parts.append("")
+        parts.append("👤 Nickname: " + str(nickname))
+        parts.append("🆔 Player ID: " + str(player_id))
+        parts.append("🌍 Region: " + region_flag + " " + str(region_name))
+        parts.append("🧾 Account Type: " + acc_type_name + " (" + str(account_type) + ")")
+        parts.append("🏅 Level: " + str(level))
+        parts.append("✨ EXP: " + str(exp))
+        parts.append("❤️ Likes: " + str(likes))
+        parts.append("📅 Created On: 🗓️ " + str(created_at))
+        parts.append("🔑 Last Login: ⏱️ " + str(last_login))
+        parts.append("")
+        parts.append("🏆 Rank Information")
+        parts.append("═══════════════════════════════")
+        parts.append("🎯 Battle Royale Rank: " + str(br_rank) + " 🏵️ (" + rank_tier + ")")
+        parts.append("⭐ Ranking Points: " + str(rank_points))
+        parts.append("🚀 Max Rank: " + str(max_rank))
+        parts.append("⚔️ Clash Squad Rank: " + str(cs_rank))
+        parts.append("🎯 CS Points: " + str(cs_points))
+        parts.append("🦈 Hippo Rank: " + str(hippo_rank))
+        parts.append("")
+        parts.append("🐾 Pet Information")
+        parts.append("═══════════════════════════════")
+        parts.append("🐶 Pet Name: " + str(pet_name))
+        parts.append("🆔 Pet ID: " + str(pet_id))
+        parts.append("📈 Level: " + str(pet_level) + " — EXP: " + str(pet_exp))
+        parts.append("🎨 Skin ID: " + str(pet_skin))
+        parts.append("💥 Selected Skill ID: " + str(pet_skill))
+        parts.append("")
+        parts.append("✍️ Social Information")
+        parts.append("═══════════════════════════════")
+        parts.append("💬 Signature: \"" + str(signature) + "\"")
+        parts.append("")
+        parts.append("🛡️ Veteran Status")
+        parts.append("═══════════════════════════════")
+        parts.append("🎖️ Expires: 🗓️ " + str(veteran_date))
+        parts.append("")
+        parts.append("⭐ Credit Score")
+        parts.append("═══════════════════════════════")
+        parts.append("🏅 Score: " + str(credit_score) + "/100")
+        parts.append("```")
+        
+        # Join all parts
+        message = "\n".join(parts)
+        
+        return message
+        
+    except Exception as e:
+        logging.error("Formatting Error: {}".format(e))
+        return "```\n❌ Error formatting player data: {}\n```".format(str(e))
+
+@client.on(events.NewMessage(outgoing=True, pattern=r'(?i)^\.Cid\s+(\d+)$'))
+async def cid_command(event):
+    """Handle .Cid command"""
+    try:
+        # Extract UID from command
+        uid = event.pattern_match.group(1)
+        
+        # Send processing message
+        processing_msg = await event.edit("🔍 Fetching player details...")
+        
+        # Fetch data from API
+        data = fetch_player_data(uid)
+        
+        if data is None:
+            await processing_msg.edit("```\n❌ Error: Unable to fetch data from API. Please try again later.\n```")
+            return
+        
+        # Check if data contains error
+        if "error" in data or "basicinfo" not in data:
+            await processing_msg.edit("```\n❌ Error: Player not found or invalid UID: {}\n```".format(uid))
+            return
+        
+        # Format the profile
+        formatted_profile = format_player_profile(data)
+        
+        # Send the formatted profile
+        await processing_msg.edit(formatted_profile)
+        
+    except Exception as e:
+        logging.error("Command Error: {}".format(e))
+        await event.edit("```\n❌ Error: {}\n```".format(str(e)))
+
+@client.on(events.NewMessage(outgoing=True, pattern=r'(?i)^\.ping$'))
+async def ping_command(event):
+    """Test command to check if bot is working"""
+    await event.edit("```\n🏓 Pong! Bot is alive!\n```")
+
+@client.on(events.NewMessage(outgoing=True, pattern=r'(?i)^\.help$'))
+async def help_command(event):
+    """Help command"""
+    help_text = "```\n"
+    help_text += "🤖 Free Fire Userbot Commands\n"
+    help_text += "═══════════════════════════════\n\n"
+    help_text += ".Cid [UID]\n"
+    help_text += "  → Get Free Fire player details\n"
+    help_text += "  → Example: .Cid 2716319203\n\n"
+    help_text += ".ping\n"
+    help_text += "  → Check if bot is alive\n\n"
+    help_text += ".help\n"
+    help_text += "  → Show this help message\n"
+    help_text += "```"
+    await event.edit(help_text)
+
+async def main():
+    """Main function to start the bot"""
+    try:
+        # Start the client
+        await client.start()
+        
+        me = await client.get_me()
+        logging.info("Userbot started successfully!")
+        logging.info("Logged in as: {} (@{})".format(me.first_name, me.username))
+        logging.info("User ID: {}".format(me.id))
+        logging.info("Free Fire Userbot is ready!")
+        logging.info("Use .Cid [UID] to get player details")
+        
+        # Keep the client running
+        await client.run_until_disconnected()
+        
+    except Exception as e:
+        logging.error("Error starting bot: {}".format(e))
+        sys.exit(1)
+
+if __name__ == "__main__":
+    # Start Flask in a separate thread
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    logging.info("Flask server started")
+    
+    # Start the Telegram client
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Bot stopped by user")
+    except Exception as e:
+        logging.error("Fatal error: {}".format(e))
+        sys.exit(1)🧾 Account Type: {'Garena' if basic.get('accounttype') == 1 else 'Guest'} ({basic.get('accounttype', 'N/A')})
 🏅 Level: {basic.get('level', 'N/A')}
 ✨ EXP: {format_number(basic.get('exp', 0))}
 ❤️ Likes: {format_number(basic.get('liked', 0))}
