@@ -25,6 +25,19 @@ API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
 
+# Validate environment variables
+if not API_ID or API_ID == 0:
+    logging.error("API_ID is not set! Please set it in environment variables.")
+    sys.exit(1)
+
+if not API_HASH:
+    logging.error("API_HASH is not set! Please set it in environment variables.")
+    sys.exit(1)
+
+if not SESSION_STRING:
+    logging.error("SESSION_STRING is not set! Please set it in environment variables.")
+    sys.exit(1)
+
 # Initialize Telethon with StringSession
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 
@@ -235,14 +248,22 @@ async def help_command(event):
 
 async def main():
     try:
-        await client.start()
+        # Connect to Telegram
+        await client.connect()
+        
+        # Check if authorized
+        if not await client.is_user_authorized():
+            logging.error("Session string is invalid or expired!")
+            logging.error("Please generate a new session string.")
+            sys.exit(1)
         
         me = await client.get_me()
-        logging.info("Userbot started!")
-        logging.info("User: {} (@{})".format(me.first_name, me.username))
+        logging.info("Userbot started successfully!")
+        logging.info("User: {} (@{})".format(me.first_name, me.username if me.username else "No username"))
         logging.info("ID: {}".format(me.id))
         logging.info("Ready! Use .Cid [UID]")
         
+        # Keep the client running
         await client.run_until_disconnected()
         
     except Exception as e:
@@ -250,12 +271,14 @@ async def main():
         sys.exit(1)
 
 if __name__ == "__main__":
+    # Start Flask in a separate thread
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
     
     logging.info("Flask started")
     
+    # Start the Telegram client
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
