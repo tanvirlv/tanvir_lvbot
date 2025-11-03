@@ -1,100 +1,265 @@
-# -*- coding: utf-8 -*-
 import os
 import asyncio
-import requests
 from datetime import datetime
 from telethon import TelegramClient, events
-from telethon.sessions import StringSession
 from flask import Flask
 from threading import Thread
+import aiohttp
+import logging
 
+# Setup logging
+logging.basicConfig(
+    format='[%(levelname) 5s/%(asctime)s] %(name)s: %(message)s',
+    level=logging.INFO
+)
+
+# Environment variables
+API_ID = int(os.getenv('API_ID'))
+API_HASH = os.getenv('API_HASH')
+SESSION_STRING = os.getenv('SESSION_STRING')
+PORT = int(os.getenv('PORT', 10000))
+
+# Initialize Telethon Client
+client = TelegramClient('userbot', API_ID, API_HASH)
+
+# Flask app for Render deployment
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Free Fire Userbot is running!"
+    return "🤖 Free Fire Userbot is Running!"
 
 @app.route('/health')
 def health():
-    return {"status": "ok", "message": "Bot is active"}
+    return {"status": "healthy", "bot": "running"}
 
 def run_flask():
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
-
-API_ID = int(os.getenv('API_ID', '0'))
-API_HASH = os.getenv('API_HASH', '')
-SESSION_STRING = os.getenv('SESSION_STRING', '')
-
-if not API_ID or not API_HASH or not SESSION_STRING:
-    print("ERROR: Missing environment variables!")
-    exit(1)
-
-print(f"API_ID: {API_ID}")
-print(f"API_HASH: {API_HASH[:10]}...")
-print(f"SESSION_STRING: {SESSION_STRING[:20]}...")
-
-client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+    """Run Flask in a separate thread"""
+    app.run(host='0.0.0.0', port=PORT)
 
 def unix_to_date(timestamp):
+    """Convert Unix timestamp to readable date"""
     try:
-        return datetime.fromtimestamp(int(timestamp)).strftime('%d %b %Y, %I:%M %p')
+        if isinstance(timestamp, str):
+            timestamp = int(timestamp)
+        return datetime.fromtimestamp(timestamp).strftime('%d %b %Y, %I:%M %p')
     except:
-        return timestamp
+        return "N/A"
 
 def format_number(num):
+    """Format numbers with commas"""
     try:
         return f"{int(num):,}"
     except:
-        return num
+        return str(num)
 
 def get_region_flag(region):
+    """Get flag emoji for region"""
     flags = {
-        'BD': '\U0001F1E7\U0001F1E9 Bangladesh',
-        'IN': '\U0001F1EE\U0001F1F3 India',
-        'PK': '\U0001F1F5\U0001F1F0 Pakistan',
-        'ID': '\U0001F1EE\U0001F1E9 Indonesia',
-        'TH': '\U0001F1F9\U0001F1ED Thailand',
-        'BR': '\U0001F1E7\U0001F1F7 Brazil',
-        'US': '\U0001F1FA\U0001F1F8 USA',
+        'BD': '🇧🇩 Bangladesh',
+        'IN': '🇮🇳 India',
+        'PK': '🇵🇰 Pakistan',
+        'US': '🇺🇸 USA',
+        'BR': '🇧🇷 Brazil',
+        'ID': '🇮🇩 Indonesia',
+        'TH': '🇹🇭 Thailand',
+        'VN': '🇻🇳 Vietnam',
+        'MY': '🇲🇾 Malaysia',
+        'PH': '🇵🇭 Philippines',
     }
-    return flags.get(region.upper(), f'\U0001F30D {region.upper()}')
+    return flags.get(region.upper(), f'🌍 {region}')
 
-def fetch_player_data(uid, server='bd'):
+async def fetch_player_data(uid, server='bd'):
+    """Fetch player data from API"""
     url = f"https://freefire-api-2-e4j5.onrender.com/get_player_personal_show?server={server}&uid={uid}"
+    
     try:
-        response = requests.get(url, timeout=30)
-        if response.status_code == 200:
-            return response.json()
-        return None
-    except:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    return None
+    except Exception as e:
+        logging.error(f"API Error: {e}")
         return None
 
-def format_player_profile(data):
+def format_player_info(data):
+    """Format player information into beautiful text"""
     try:
         basic = data.get('basicinfo', {})
+        profile = data.get('profileinfo', {})
         pet = data.get('petinfo', {})
         social = data.get('socialinfo', {})
         credit = data.get('creditscoreinfo', {})
         
-        lines = []
-        lines.append("```")
-        lines.append("\U0001F3AE Free Fire Player Profile")
-        lines.append("")
-        lines.append(f"\U0001F464 Nickname: {basic.get('nickname', 'N/A')}")
-        lines.append(f"\U0001F194 Player ID: {basic.get('accountid', 'N/A')}")
-        lines.append(f"\U0001F30D Region: {get_region_flag(basic.get('region', 'N/A'))}")
-        lines.append(f"\U0001F9FE Account Type: Garena ({basic.get('accounttype', 'N/A')})")
-        lines.append(f"\U0001F3C5 Level: {basic.get('level', 'N/A')}")
-        lines.append(f"\u2728 EXP: {format_number(basic.get('exp', 0))}")
-        lines.append(f"\u2764\uFE0F Likes: {format_number(basic.get('liked', 0))}")
-        lines.append(f"\U0001F4C5 Created On: \U0001F5D3\uFE0F {unix_to_date(basic.get('createat', 'N/A'))}")
-        lines.append(f"\U0001F511 Last Login: \u23F1\uFE0F {unix_to_date(basic.get('lastloginat', 'N/A'))}")
-        lines.append("")
-        lines.append("\U0001F3C6 Rank Information")
-        lines.append(f"\U0001F3AF Battle Royale Rank: {basic.get('rank', 'N/A')} \U0001F3F5\uFE0F")
-        lines.append(f"\u2B50 Ranking Points: {format_number(basic.get('rankingpoints', 0))}")
-        lines.append(f"\U0001F680 Max Rank: {basic.get('maxrank', 'N/A')}")
+        # Build formatted message
+        message = f"""```
+🎮 Free Fire Player Profile
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+👤 Nickname: {basic.get('nickname', 'N/A')}
+🆔 Player ID: {basic.get('accountid', 'N/A')}
+🌍 Region: {get_region_flag(basic.get('region', 'Unknown'))}
+🧾 Account Type: {'Garena' if basic.get('accounttype') == 1 else 'Guest'} ({basic.get('accounttype', 'N/A')})
+🏅 Level: {basic.get('level', 'N/A')}
+✨ EXP: {format_number(basic.get('exp', 0))}
+❤️ Likes: {format_number(basic.get('liked', 0))}
+📅 Created On: {unix_to_date(basic.get('createat', 0))}
+🔑 Last Login: {unix_to_date(basic.get('lastloginat', 0))}
+
+🏆 Rank Information
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 Battle Royale Rank: {basic.get('rank', 'N/A')} 🏵️
+⭐ Ranking Points: {format_number(basic.get('rankingpoints', 0))}
+🚀 Max Rank: {basic.get('maxrank', 'N/A')}
+⚔️ Clash Squad Rank: {basic.get('csrank', 'N/A')}
+🎯 CS Points: {basic.get('csrankingpoints', 'N/A')}
+🏆 CS Max Rank: {basic.get('csmaxrank', 'N/A')}
+🦈 Hippo Rank: {basic.get('hipporank', 'N/A')}
+💎 Hippo Points: {basic.get('hipporankingpoints', 'N/A')}
+"""
+
+        # Pet information
+        if pet:
+            message += f"""
+🐾 Pet Information
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🐶 Pet Name: {pet.get('name', 'N/A')}
+🆔 Pet ID: {pet.get('id', 'N/A')}
+📈 Level: {pet.get('level', 'N/A')} — EXP: {format_number(pet.get('exp', 0))}
+🎨 Skin ID: {pet.get('skinid', 'N/A')}
+💥 Selected Skill ID: {pet.get('selectedskillid', 'N/A')}
+"""
+
+        # Social & Additional Info
+        signature = social.get('signature', 'Free Fire! Battle in Style!')
+        message += f"""
+✍️ Signature
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💬 "{signature}"
+"""
+
+        # Veteran Status
+        if basic.get('veteranexpiretime'):
+            message += f"""
+🛡️ Veteran Status
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎖️ Expires: {unix_to_date(basic.get('veteranexpiretime'))}
+"""
+
+        # Credit Score
+        if credit:
+            message += f"""
+💳 Credit Score
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⭐ Score: {credit.get('creditscore', 'N/A')}/100
+"""
+
+        # Version & Badge
+        message += f"""
+📱 Additional Info
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎮 Release Version: {basic.get('releaseversion', 'N/A')}
+🏅 Badge Count: {basic.get('badgecnt', 0)}
+🎖️ Badge ID: {basic.get('badgeid', 'N/A')}
+🎪 Season ID: {basic.get('seasonid', 'N/A')}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```"""
+        
+        return message
+    except Exception as e:
+        logging.error(f"Formatting Error: {e}")
+        return f"```\n❌ Error formatting player data\n```"
+
+@client.on(events.NewMessage(pattern=r'(?i)^[./!]cid\s+(\d+)(?:\s+(\w+))?'))
+async def check_id_handler(event):
+    """Handler for .cid command"""
+    try:
+        # Extract UID and server from command
+        match = event.pattern_match
+        uid = match.group(1)
+        server = match.group(2) if match.group(2) else 'bd'
+        
+        # Send processing message
+        processing_msg = await event.reply("🔍 Fetching player details... Please wait...")
+        
+        # Fetch data from API
+        data = await fetch_player_data(uid, server.lower())
+        
+        if data and 'basicinfo' in data:
+            # Format and send the result
+            formatted_data = format_player_info(data)
+            await processing_msg.edit(formatted_data)
+        else:
+            await processing_msg.edit(
+                f"```\n❌ Player not found!\n\n"
+                f"🆔 UID: {uid}\n"
+                f"🌍 Server: {server.upper()}\n\n"
+                f"Please check the UID and server.\n```"
+            )
+    
+    except Exception as e:
+        logging.error(f"Command Error: {e}")
+        await event.reply(f"```\n❌ An error occurred:\n{str(e)}\n```")
+
+@client.on(events.NewMessage(pattern=r'(?i)^[./!]help'))
+async def help_handler(event):
+    """Handler for .help command"""
+    help_text = """```
+🤖 Free Fire Player Info Bot
+
+📌 Commands:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔹 .cid <UID> [server]
+   Get player details by UID
+   
+   Example:
+   .cid 2716319203
+   .cid 2716319203 bd
+   .cid 2716319203 in
+
+🔹 .help
+   Show this help message
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌍 Available Servers:
+BD, IN, PK, US, BR, ID, TH, etc.
+
+Default server: BD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```"""
+    await event.reply(help_text)
+
+async def main():
+    """Main function to start the bot"""
+    logging.info("🚀 Starting Free Fire Userbot...")
+    
+    # Start the client
+    await client.start(session=SESSION_STRING)
+    
+    # Get current user info
+    me = await client.get_me()
+    logging.info(f"✅ Userbot started as: {me.first_name} (@{me.username})")
+    logging.info("📝 Bot is ready! Use .cid <UID> to check player details")
+    
+    # Keep the bot running
+    await client.run_until_disconnected()
+
+if __name__ == '__main__':
+    # Start Flask in a separate thread
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    logging.info(f"🌐 Flask server started on port {PORT}")
+    
+    # Start the Telegram bot
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("👋 Bot stopped by user")
+    except Exception as e:
+        logging.error(f"❌ Fatal error: {e}")        lines.append(f"\U0001F680 Max Rank: {basic.get('maxrank', 'N/A')}")
         lines.append(f"\u2694\uFE0F Clash Squad Rank: {basic.get('csrank', 'N/A')}")
         lines.append(f"\U0001F3AF CS Points: {basic.get('csrankingpoints', 'N/A')}")
         lines.append(f"\U0001F988 Hippo Rank: {basic.get('hipporank', 'N/A')}")
