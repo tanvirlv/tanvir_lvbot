@@ -279,23 +279,40 @@ def format_gor_receipt(order_data):
     return "\n".join(lines)
 
 # Authorization checker
-def is_authorized(user_id):
+async def is_authorized(event):
     """Check if user is authorized"""
-    if not authorized_user_ids:  # If no users specified, allow the bot owner
+    user_id = event.sender_id
+    
+    # Get bot owner ID
+    me = await client.get_me()
+    owner_id = me.id
+    
+    # Owner always has access
+    if user_id == owner_id:
         return True
+    
+    # Check if user is in authorized list
+    if not authorized_user_ids:
+        return False
+    
     return user_id in authorized_user_ids
 
 # Conversation storage
 user_conversations = {}
 
-# ================ ORIGINAL COMMANDS ================
+# ================ COMMANDS (Works for both owner and authorized users) ================
 
-@client.on(events.NewMessage(outgoing=True, pattern=r'(?i)^\.Cid\s+(\d+)$'))
+@client.on(events.NewMessage(pattern=r'(?i)^\.Cid\s+(\d+)$'))
 async def cid_command(event):
+    # Check authorization
+    if not await is_authorized(event):
+        await event.reply("```\n❌ You are not authorized to use this bot.\n```")
+        return
+    
     try:
         uid = event.pattern_match.group(1)
         
-        processing_msg = await event.edit("🔍 Fetching player details...")
+        processing_msg = await event.reply("🔍 Fetching player details...")
         
         data = fetch_player_data(uid)
         
@@ -313,14 +330,22 @@ async def cid_command(event):
         
     except Exception as e:
         logging.error("Command Error: {}".format(e))
-        await event.edit("```\nError: {}\n```".format(str(e)))
+        await event.reply("```\nError: {}\n```".format(str(e)))
 
-@client.on(events.NewMessage(outgoing=True, pattern=r'(?i)^\.ping$'))
+@client.on(events.NewMessage(pattern=r'(?i)^\.ping$'))
 async def ping_command(event):
-    await event.edit("```\n🏓 Pong! Bot is alive!\n```")
+    if not await is_authorized(event):
+        await event.reply("```\n❌ You are not authorized to use this bot.\n```")
+        return
+    
+    await event.reply("```\n🏓 Pong! Bot is alive!\n```")
 
-@client.on(events.NewMessage(outgoing=True, pattern=r'(?i)^\.help$'))
+@client.on(events.NewMessage(pattern=r'(?i)^\.help$'))
 async def help_command(event):
+    if not await is_authorized(event):
+        await event.reply("```\n❌ You are not authorized to use this bot.\n```")
+        return
+    
     help_lines = []
     help_lines.append("```")
     help_lines.append("🤖 Free Fire Userbot Commands")
@@ -343,24 +368,23 @@ async def help_command(event):
     help_lines.append(".help")
     help_lines.append("  → Show this help message")
     help_lines.append("```")
-    await event.edit("\n".join(help_lines))
+    await event.reply("\n".join(help_lines))
 
-# ================ NEW COMMANDS ================
+# ================ TOP-UP COMMAND ================
 
-@client.on(events.NewMessage(outgoing=True, pattern=r'(?i)^\.tp\s+(\d+)$'))
+@client.on(events.NewMessage(pattern=r'(?i)^\.tp\s+(\d+)$'))
 async def tp_command(event):
     """Top-up command"""
+    if not await is_authorized(event):
+        await event.reply("```\n❌ You are not authorized to use this bot.\n```")
+        return
+    
     try:
         user_id = event.sender_id
-        
-        if not is_authorized(user_id):
-            await event.edit("```\n❌ You are not authorized to use this bot.\n```")
-            return
-        
         uid = event.pattern_match.group(1)
         
         # Fetch nickname
-        processing_msg = await event.edit("🔍 Fetching player info...")
+        processing_msg = await event.reply("🔍 Fetching player info...")
         nickname = get_nickname(uid)
         
         if not nickname:
@@ -371,37 +395,39 @@ async def tp_command(event):
         user_conversations[user_id] = {
             'state': 'tp_confirm',
             'uid': uid,
-            'nickname': nickname
+            'nickname': nickname,
+            'chat_id': event.chat_id
         }
         
         await processing_msg.edit("**{}** - Should we continue? Reply 'y' or 'n'".format(nickname))
         
     except Exception as e:
         logging.error("TP Command Error: {}".format(e))
-        await event.edit("```\nError: {}\n```".format(str(e)))
+        await event.reply("```\nError: {}\n```".format(str(e)))
 
-@client.on(events.NewMessage(outgoing=True, pattern=r'(?i)^\.gor$'))
+@client.on(events.NewMessage(pattern=r'(?i)^\.gor$'))
 async def gor_command(event):
     """General order command"""
+    if not await is_authorized(event):
+        await event.reply("```\n❌ You are not authorized to use this bot.\n```")
+        return
+    
     try:
         user_id = event.sender_id
         
-        if not is_authorized(user_id):
-            await event.edit("```\n❌ You are not authorized to use this bot.\n```")
-            return
-        
         # Initialize conversation
         user_conversations[user_id] = {
-            'state': 'gor_uid'
+            'state': 'gor_uid',
+            'chat_id': event.chat_id
         }
         
-        await event.edit("**Enter UID:**")
+        await event.reply("**Enter UID:**")
         
     except Exception as e:
         logging.error("GOR Command Error: {}".format(e))
-        await event.edit("```\nError: {}\n```".format(str(e)))
+        await event.reply("```\nError: {}\n```".format(str(e)))
 
-@client.on(events.NewMessage(outgoing=True))
+@client.on(events.NewMessage())
 async def handle_conversations(event):
     """Handle conversation flows"""
     try:
@@ -411,22 +437,31 @@ async def handle_conversations(event):
         if user_id not in user_conversations:
             return
         
+        conv = user_conversations[user_id]
+        
+        # Only process messages in the same chat where conversation started
+        if event.chat_id != conv.get('chat_id'):
+            return
+        
         # Skip if message is a command
         if event.message.text.startswith('.'):
             return
         
-        conv = user_conversations[user_id]
+        # Check authorization
+        if not await is_authorized(event):
+            return
+        
         state = conv.get('state')
         message_text = event.message.text.strip()
         
         # ============ TP FLOW ============
         if state == 'tp_confirm':
             if message_text.lower() == 'n':
-                await event.edit("```\n❌ Transaction cancelled, try new one.\n```")
+                await event.reply("```\n❌ Transaction cancelled, try new one.\n```")
                 del user_conversations[user_id]
             elif message_text.lower() == 'y':
                 conv['state'] = 'tp_unipin'
-                await event.edit("**Enter Unipin code:**")
+                await event.reply("**Enter Unipin code:**")
             return
         
         elif state == 'tp_unipin':
@@ -441,25 +476,25 @@ async def handle_conversations(event):
                 logging.error("Error forwarding to topup group: {}".format(e))
             
             conv['state'] = 'tp_bkash'
-            await event.edit("**Enter Bkash Trx ID:**")
+            await event.reply("**Enter Bkash Trx ID:**")
             return
         
         elif state == 'tp_bkash':
             conv['bkash_trx'] = message_text
             conv['state'] = 'tp_package'
-            await event.edit("**Enter the package name:**")
+            await event.reply("**Enter the package name:**")
             return
         
         elif state == 'tp_package':
             conv['package_name'] = message_text
             conv['state'] = 'tp_amount'
-            await event.edit("**Enter Profit/paid amount:**")
+            await event.reply("**Enter Profit/paid amount:**")
             return
         
         elif state == 'tp_amount':
             conv['paid_amount'] = message_text
             conv['state'] = 'tp_orderid'
-            await event.edit("**Order ID:** (or reply /gen to auto-generate)")
+            await event.reply("**Order ID:** (or reply /gen to auto-generate)")
             return
         
         elif state == 'tp_orderid':
@@ -469,12 +504,12 @@ async def handle_conversations(event):
                 conv['order_id'] = message_text
             
             conv['state'] = 'tp_final_confirm'
-            await event.edit("**All ok? Reply 'y' or 'n'**")
+            await event.reply("**All ok? Reply 'y' or 'n'**")
             return
         
         elif state == 'tp_final_confirm':
             if message_text.lower() == 'n':
-                await event.edit("```\n❌ Processing cancelled.\n```")
+                await event.reply("```\n❌ Processing cancelled.\n```")
                 del user_conversations[user_id]
             elif message_text.lower() == 'y':
                 # Generate receipt
@@ -494,10 +529,10 @@ async def handle_conversations(event):
                 # Forward to receipt group
                 try:
                     await client.send_message(RECEIPT_CHAT_ID, receipt)
-                    await event.edit("```\n✅ Order processed successfully!\n```")
+                    await event.reply("```\n✅ Order processed successfully!\n```")
                     logging.info("Receipt forwarded to group")
                 except Exception as e:
-                    await event.edit("```\n❌ Error forwarding receipt: {}\n```".format(str(e)))
+                    await event.reply("```\n❌ Error forwarding receipt: {}\n```".format(str(e)))
                     logging.error("Error forwarding receipt: {}".format(e))
                 
                 del user_conversations[user_id]
@@ -511,38 +546,38 @@ async def handle_conversations(event):
             nickname = get_nickname(uid)
             
             if not nickname:
-                await event.edit("```\n❌ Error: Player not found. UID: {}\n```".format(uid))
+                await event.reply("```\n❌ Error: Player not found. UID: {}\n```".format(uid))
                 del user_conversations[user_id]
                 return
             
             conv['uid'] = uid
             conv['nickname'] = nickname
             conv['state'] = 'gor_details'
-            await event.edit("**{}** - Enter order detail and method:".format(nickname))
+            await event.reply("**{}** - Enter order detail and method:".format(nickname))
             return
         
         elif state == 'gor_details':
             conv['order_details'] = message_text
             conv['state'] = 'gor_bkash'
-            await event.edit("**Enter Bkash Trx ID:**")
+            await event.reply("**Enter Bkash Trx ID:**")
             return
         
         elif state == 'gor_bkash':
             conv['bkash_trx'] = message_text
             conv['state'] = 'gor_package'
-            await event.edit("**Enter package name:**")
+            await event.reply("**Enter package name:**")
             return
         
         elif state == 'gor_package':
             conv['package_name'] = message_text
             conv['state'] = 'gor_amount'
-            await event.edit("**Enter Paid/profit amount:**")
+            await event.reply("**Enter Paid/profit amount:**")
             return
         
         elif state == 'gor_amount':
             conv['paid_amount'] = message_text
             conv['state'] = 'gor_orderid'
-            await event.edit("**Order ID:** (or reply /gen to auto-generate)")
+            await event.reply("**Order ID:** (or reply /gen to auto-generate)")
             return
         
         elif state == 'gor_orderid':
@@ -568,10 +603,10 @@ async def handle_conversations(event):
             # Forward to topup group (as per requirement)
             try:
                 await client.send_message(TOPUP_CHAT_ID, receipt)
-                await event.edit("```\n✅ Order processed successfully!\n```")
+                await event.reply("```\n✅ Order processed successfully!\n```")
                 logging.info("GOR Receipt forwarded to group")
             except Exception as e:
-                await event.edit("```\n❌ Error forwarding receipt: {}\n```".format(str(e)))
+                await event.reply("```\n❌ Error forwarding receipt: {}\n```".format(str(e)))
                 logging.error("Error forwarding GOR receipt: {}".format(e))
             
             del user_conversations[user_id]
@@ -595,7 +630,7 @@ async def main():
         logging.info("Userbot started successfully!")
         logging.info("User: {} (@{})".format(me.first_name, me.username if me.username else "No username"))
         logging.info("ID: {}".format(me.id))
-        logging.info("Authorized Users: {}".format(authorized_user_ids if authorized_user_ids else "All (owner only)"))
+        logging.info("Authorized Users: {}".format(authorized_user_ids if authorized_user_ids else "Owner only"))
         logging.info("Topup Chat ID: {}".format(TOPUP_CHAT_ID))
         logging.info("Receipt Chat ID: {}".format(RECEIPT_CHAT_ID))
         logging.info("Ready! Commands: .Cid, .tp, .gor, .ping, .help")
