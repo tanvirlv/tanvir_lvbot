@@ -8,7 +8,7 @@ import string
 from datetime import datetime, timedelta
 from flask import Flask
 from threading import Thread
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 import requests
 
@@ -300,6 +300,182 @@ async def is_authorized(event):
 # Conversation storage
 user_conversations = {}
 
+# Calculator storage
+calculator_sessions = {}
+
+def get_calculator_buttons(expression, result=""):
+    """Generate calculator button layout"""
+    display = "📟 **Calculator**\n\n"
+    if expression:
+        display += "**Expression:** `{}`\n".format(expression)
+    if result:
+        display += "**Result:** `{}`".format(result)
+    else:
+        display += "**Result:** `0`"
+    
+    buttons = [
+        [
+            Button.inline("C", b"calc_C"),
+            Button.inline("⌫", b"calc_back"),
+            Button.inline("/", b"calc_/"),
+            Button.inline("*", b"calc_*")
+        ],
+        [
+            Button.inline("7", b"calc_7"),
+            Button.inline("8", b"calc_8"),
+            Button.inline("9", b"calc_9"),
+            Button.inline("-", b"calc_-")
+        ],
+        [
+            Button.inline("4", b"calc_4"),
+            Button.inline("5", b"calc_5"),
+            Button.inline("6", b"calc_6"),
+            Button.inline("+", b"calc_+")
+        ],
+        [
+            Button.inline("1", b"calc_1"),
+            Button.inline("2", b"calc_2"),
+            Button.inline("3", b"calc_3"),
+            Button.inline("=", b"calc_=")
+        ],
+        [
+            Button.inline("0", b"calc_0"),
+            Button.inline(".", b"calc_."),
+            Button.inline("(", b"calc_("),
+            Button.inline(")", b"calc_)")
+        ],
+        [
+            Button.inline("❌ Close", b"calc_close")
+        ]
+    ]
+    
+    return display, buttons
+
+def safe_calculate(expression):
+    """Safely evaluate mathematical expression"""
+    try:
+        # Remove any spaces
+        expression = expression.replace(" ", "")
+        
+        # Only allow numbers, operators, parentheses, and decimal points
+        allowed_chars = "0123456789+-*/.()"
+        if not all(c in allowed_chars for c in expression):
+            return "Error: Invalid characters"
+        
+        # Evaluate the expression
+        result = eval(expression)
+        
+        # Format result
+        if isinstance(result, float):
+            # Remove trailing zeros
+            result = "{:.10f}".format(result).rstrip('0').rstrip('.')
+        
+        return str(result)
+    except ZeroDivisionError:
+        return "Error: Division by zero"
+    except SyntaxError:
+        return "Error: Invalid syntax"
+    except Exception as e:
+        return "Error: {}".format(str(e))
+
+# ================ CALCULATOR COMMAND ================
+
+@client.on(events.NewMessage(pattern=r'(?i)^\.c$'))
+async def calculator_command(event):
+    """Calculator command"""
+    if not await is_authorized(event):
+        await event.reply("```\n❌ You are not authorized to use this bot.\n```")
+        return
+    
+    try:
+        user_id = event.sender_id
+        
+        # Initialize calculator session
+        calculator_sessions[user_id] = {
+            'expression': '',
+            'result': '0'
+        }
+        
+        display, buttons = get_calculator_buttons('', '0')
+        
+        msg = await event.reply(display, buttons=buttons)
+        
+        # Store message ID for updating
+        calculator_sessions[user_id]['message_id'] = msg.id
+        calculator_sessions[user_id]['chat_id'] = event.chat_id
+        
+    except Exception as e:
+        logging.error("Calculator Command Error: {}".format(e))
+        await event.reply("```\nError: {}\n```".format(str(e)))
+
+@client.on(events.CallbackQuery(pattern=b"calc_(.+)"))
+async def calculator_callback(event):
+    """Handle calculator button presses"""
+    try:
+        user_id = event.sender_id
+        
+        # Check authorization
+        me = await client.get_me()
+        if user_id != me.id and user_id not in authorized_user_ids:
+            await event.answer("❌ You are not authorized!", alert=True)
+            return
+        
+        # Get calculator session
+        if user_id not in calculator_sessions:
+            await event.answer("⚠️ Session expired. Use .c to start again.", alert=True)
+            return
+        
+        session = calculator_sessions[user_id]
+        button_value = event.data.decode('utf-8').replace('calc_', '')
+        
+        # Handle button press
+        if button_value == 'C':
+            # Clear all
+            session['expression'] = ''
+            session['result'] = '0'
+        
+        elif button_value == 'back':
+            # Delete last character
+            if session['expression']:
+                session['expression'] = session['expression'][:-1]
+                if not session['expression']:
+                    session['result'] = '0'
+        
+        elif button_value == '=':
+            # Calculate result
+            if session['expression']:
+                result = safe_calculate(session['expression'])
+                session['result'] = result
+                
+                # If result is valid, replace expression with result
+                if not result.startswith('Error'):
+                    session['expression'] = result
+        
+        elif button_value == 'close':
+            # Close calculator
+            await event.delete()
+            del calculator_sessions[user_id]
+            return
+        
+        else:
+            # Add number or operator
+            session['expression'] += button_value
+            
+            # Auto-calculate as user types (without =)
+            temp_result = safe_calculate(session['expression'])
+            if not temp_result.startswith('Error'):
+                session['result'] = temp_result
+        
+        # Update display
+        display, buttons = get_calculator_buttons(session['expression'], session['result'])
+        
+        await event.edit(display, buttons=buttons)
+        await event.answer()
+        
+    except Exception as e:
+        logging.error("Calculator Callback Error: {}".format(e))
+        await event.answer("❌ Error: {}".format(str(e)), alert=True)
+
 # ================ COMMANDS (Works for both owner and authorized users) ================
 
 @client.on(events.NewMessage(pattern=r'(?i)^\.Cid\s+(\d+)$'))
@@ -361,6 +537,9 @@ async def help_command(event):
     help_lines.append("")
     help_lines.append(".gor")
     help_lines.append("  → Process general order")
+    help_lines.append("")
+    help_lines.append(".c")
+    help_lines.append("  → Open calculator")
     help_lines.append("")
     help_lines.append(".ping")
     help_lines.append("  → Check if bot is alive")
@@ -633,7 +812,7 @@ async def main():
         logging.info("Authorized Users: {}".format(authorized_user_ids if authorized_user_ids else "Owner only"))
         logging.info("Topup Chat ID: {}".format(TOPUP_CHAT_ID))
         logging.info("Receipt Chat ID: {}".format(RECEIPT_CHAT_ID))
-        logging.info("Ready! Commands: .Cid, .tp, .gor, .ping, .help")
+        logging.info("Ready! Commands: .Cid, .tp, .gor, .c, .ping, .help")
         
         # Keep the client running
         await client.run_until_disconnected()
