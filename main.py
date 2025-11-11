@@ -29,8 +29,9 @@ SESSION_STRING = os.environ.get("SESSION_STRING", "")
 
 # New environment variables for authorization and chat IDs
 AUTHORIZED_USERS = os.environ.get("AUTHORIZED_USERS", "")  # Comma-separated user IDs
-TOPUP_CHAT_ID = int(os.environ.get("TOPUP_CHAT_ID", "-5008199598"))
+AUTHORIZED_GROUPS = os.environ.get("AUTHORIZED_GROUPS", "")  # Comma-separated group chat IDs
 RECEIPT_CHAT_ID = int(os.environ.get("RECEIPT_CHAT_ID", "-5065485406"))
+TOPUP_LINK = os.environ.get("TOPUP_LINK", "https://example.com/topup")  # Topup link for .tp command
 
 # Parse authorized users
 authorized_user_ids = []
@@ -39,6 +40,14 @@ if AUTHORIZED_USERS:
         authorized_user_ids = [int(uid.strip()) for uid in AUTHORIZED_USERS.split(",") if uid.strip()]
     except:
         logging.warning("Error parsing AUTHORIZED_USERS")
+
+# Parse authorized groups
+authorized_group_ids = []
+if AUTHORIZED_GROUPS:
+    try:
+        authorized_group_ids = [int(gid.strip()) for gid in AUTHORIZED_GROUPS.split(",") if gid.strip()]
+    except:
+        logging.warning("Error parsing AUTHORIZED_GROUPS")
 
 # Validate environment variables
 if not API_ID or API_ID == 0:
@@ -280,22 +289,41 @@ def format_gor_receipt(order_data):
 
 # Authorization checker
 async def is_authorized(event):
-    """Check if user is authorized"""
+    """Check if user and chat are authorized"""
     user_id = event.sender_id
+    chat_id = event.chat_id
     
     # Get bot owner ID
     me = await client.get_me()
     owner_id = me.id
     
-    # Owner always has access
+    # Owner always has access everywhere
     if user_id == owner_id:
         return True
     
-    # Check if user is in authorized list
-    if not authorized_user_ids:
-        return False
+    # Check if it's a private chat
+    if event.is_private:
+        # In private chats, check if user is authorized
+        if not authorized_user_ids:
+            return False
+        return user_id in authorized_user_ids
+    else:
+        # In groups, check if group is authorized
+        if not authorized_group_ids:
+            return False
+        
+        # Check if chat is in authorized groups
+        if chat_id not in authorized_group_ids:
+            return False
+        
+        # Also check if user is authorized (or owner)
+        if authorized_user_ids:
+            return user_id in authorized_user_ids
+        else:
+            # If no authorized users set, only owner can use in groups
+            return False
     
-    return user_id in authorized_user_ids
+    return False
 
 # Conversation storage
 user_conversations = {}
@@ -467,7 +495,10 @@ async def tp_command(event):
             'chat_id': event.chat_id
         }
         
-        await processing_msg.edit("**{}** - Should we continue? Reply 'y' or 'n'".format(nickname))
+        # Create message with clickable link using Markdown formatting
+        message_text = "**{}** - If the player name is ok then Top up [Click here]({}), If top up is done say 'y' or 'n'".format(nickname, TOPUP_LINK)
+        
+        await processing_msg.edit(message_text)
         
     except Exception as e:
         logging.error("TP Command Error: {}".format(e))
@@ -525,7 +556,7 @@ async def handle_conversations(event):
         # ============ TP FLOW ============
         if state == 'tp_confirm':
             if message_text.lower() == 'n':
-                await event.reply("```\n❌ Transaction cancelled, try new one.\n```")
+                await event.reply("```\n❌ Top up cancelled.\n```")
                 del user_conversations[user_id]
             elif message_text.lower() == 'y':
                 conv['state'] = 'tp_unipin'
@@ -534,15 +565,7 @@ async def handle_conversations(event):
         
         elif state == 'tp_unipin':
             conv['unipin_code'] = message_text
-            
-            # Forward to topup group in format: UID UniPin_Code
-            forward_msg = "{} {}".format(conv['uid'], message_text)
-            try:
-                await client.send_message(TOPUP_CHAT_ID, forward_msg)
-                logging.info("Forwarded to topup group: {}".format(forward_msg))
-            except Exception as e:
-                logging.error("Error forwarding to topup group: {}".format(e))
-            
+            # DON'T forward to topup group anymore
             conv['state'] = 'tp_bkash'
             await event.reply("**Enter Bkash Trx ID:**")
             return
@@ -668,7 +691,7 @@ async def handle_conversations(event):
             
             receipt = format_gor_receipt(order_data)
             
-            # Forward to RECEIPT group (CHANGED FROM TOPUP)
+            # Forward to RECEIPT group
             try:
                 await client.send_message(RECEIPT_CHAT_ID, receipt)
                 await event.reply("```\n✅ Order processed successfully!\n```")
@@ -699,8 +722,9 @@ async def main():
         logging.info("User: {} (@{})".format(me.first_name, me.username if me.username else "No username"))
         logging.info("ID: {}".format(me.id))
         logging.info("Authorized Users: {}".format(authorized_user_ids if authorized_user_ids else "Owner only"))
-        logging.info("Topup Chat ID: {}".format(TOPUP_CHAT_ID))
+        logging.info("Authorized Groups: {}".format(authorized_group_ids if authorized_group_ids else "None"))
         logging.info("Receipt Chat ID: {}".format(RECEIPT_CHAT_ID))
+        logging.info("Topup Link: {}".format(TOPUP_LINK))
         logging.info("Ready! Commands: .Cid, .tp, .gor, .cd, .ping, .help")
         
         # Keep the client running
