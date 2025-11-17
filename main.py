@@ -242,21 +242,12 @@ async def is_authorized(event):
         return user_id in authorized_user_ids
     else:
         # In groups, check if group is authorized
-        if not authorized_group_ids:
-            return False
+        # If group is in authorized list, ALL users in that group can use the bot
+        if authorized_group_ids and chat_id in authorized_group_ids:
+            return True
         
-        # Check if chat is in authorized groups
-        if chat_id not in authorized_group_ids:
-            return False
-        
-        # Also check if user is authorized (or owner)
-        if authorized_user_ids:
-            return user_id in authorized_user_ids
-        else:
-            # If no authorized users set, only owner can use in groups
-            return False
-    
-    return False
+        # If group is not authorized, deny access
+        return False
 
 # ================ COMMANDS ================
 
