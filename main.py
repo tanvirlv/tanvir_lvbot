@@ -253,9 +253,8 @@ async def is_authorized(event):
 
 @client.on(events.NewMessage(pattern=r'(?i)^\.Cid\s+(\d+)$'))
 async def cid_command(event):
-    # Check authorization
+    # Check authorization - silently ignore if not authorized
     if not await is_authorized(event):
-        await event.reply("```\n❌ You are not authorized to use this bot.\n```")
         return
     
     try:
@@ -284,8 +283,8 @@ async def cid_command(event):
 @client.on(events.NewMessage(pattern=r'(?i)^\.cd$'))
 async def chatid_command(event):
     """Get chat ID or user details"""
+    # Check authorization - silently ignore if not authorized
     if not await is_authorized(event):
-        await event.reply("```\n❌ You are not authorized to use this bot.\n```")
         return
     
     try:
@@ -348,16 +347,16 @@ async def chatid_command(event):
 
 @client.on(events.NewMessage(pattern=r'(?i)^\.ping$'))
 async def ping_command(event):
+    # Check authorization - silently ignore if not authorized
     if not await is_authorized(event):
-        await event.reply("```\n❌ You are not authorized to use this bot.\n```")
         return
     
     await event.reply("```\n🏓 Pong! Bot is alive!\n```")
 
 @client.on(events.NewMessage(pattern=r'(?i)^\.help$'))
 async def help_command(event):
+    # Check authorization - silently ignore if not authorized
     if not await is_authorized(event):
-        await event.reply("```\n❌ You are not authorized to use this bot.\n```")
         return
     
     help_lines = []
